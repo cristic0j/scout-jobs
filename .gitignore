@@ -1,0 +1,4 @@
+__pycache__/
+.desc_cache.json
+nl_jobs.xlsx
+.DS_Store
