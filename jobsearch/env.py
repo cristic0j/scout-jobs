@@ -1,4 +1,4 @@
-"""API keys for runs that don't start from a terminal (launchd doesn't read ~/.zshrc).
+"""API keys and settings for runs that don't start from a terminal (launchd doesn't read ~/.zshrc).
 
 Only plain `export NAME=value` lines for the names below are read; the shell file is never executed.
 """
@@ -6,7 +6,8 @@ import os
 import re
 from pathlib import Path
 
-NAMES = ["GEMINI_API_KEY", "GEMINI_MODEL", "JOOBLE_KEY", "ADZUNA_APP_ID", "ADZUNA_APP_KEY"]
+NAMES = ["GEMINI_API_KEY", "GEMINI_MODEL", "JOOBLE_KEY", "ADZUNA_APP_ID", "ADZUNA_APP_KEY",
+         "JOBSEARCH_TRACKER", "JOBSEARCH_NOTES"]
 FILES = [Path.home() / ".zshrc", Path.home() / ".zprofile", Path.home() / ".bash_profile"]
 LINE = re.compile(r"^\s*export\s+([A-Z_][A-Z0-9_]*)=(.*)$")
 
@@ -22,6 +23,12 @@ def parse(text):
             if value and "$" not in value:  # skip values that need the shell to expand them
                 out[m.group(1)] = value  # later lines win, like in the shell
     return out
+
+
+def path(name):
+    """A file path from an environment variable (~ allowed), or None when it isn't set."""
+    value = os.environ.get(name, "").strip()
+    return Path(value).expanduser() if value else None
 
 
 def load(files=FILES):

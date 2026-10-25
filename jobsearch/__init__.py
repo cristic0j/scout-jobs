@@ -1,5 +1,4 @@
-"""Configurable job fetcher: pulls postings from public job sources into an Excel file.
+"""Job search agent: a CV goes in, AI-matched job postings come out (locally and in Google Sheets).
 
-Run `python3 -m jobsearch` to answer a few questions (job type, filters, sources) first,
-or `python3 -m jobsearch --profile NAME` to rerun saved settings without questions.
+Run `python3 -m jobsearch` for the menu; see README.md.
 """

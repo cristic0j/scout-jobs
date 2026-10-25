@@ -5,15 +5,13 @@ touched once a row exists, so a later reviewer (the AI step) can mark rows and k
 Unknown columns (added by that reviewer) are kept as they are.
 """
 import re
-from pathlib import Path
 
 import openpyxl
 from openpyxl.styles import Font
 from openpyxl.utils import get_column_letter
 
-from . import travel
+from . import env, travel
 
-TRACKER = Path.home() / "Desktop/Jobs/jobs.xlsx"
 SHEET = "Jobs"
 COLUMNS = ["Processed", "First seen", "Last seen", "Already in tracker", "Posted", "Job title", "Company",
            "Location", "Work mode", "Travel", "Level", "Language", "Source", "Link"]
@@ -37,11 +35,13 @@ def fuzzy_key(company, title):
 
 
 def tracked_keys():
-    """(company+title) keys and links already in Cristian's tracker, any sheet. Read only."""
+    """(company+title) keys and links already in your own application tracker (JOBSEARCH_TRACKER: an .xlsx
+    with Job title, Company and Link columns, any sheet). Read only."""
     keys, links = set(), set()
-    if not TRACKER.exists():
+    tracker = env.path("JOBSEARCH_TRACKER")
+    if not tracker or not tracker.exists():
         return keys, links
-    wb = openpyxl.load_workbook(TRACKER, read_only=True)
+    wb = openpyxl.load_workbook(tracker, read_only=True)
     for ws in wb:
         rows = ws.iter_rows(values_only=True)
         head = [str(h or "") for h in next(rows, [])]

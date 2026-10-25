@@ -65,15 +65,6 @@ def selected(name):
     return found
 
 
-def migrate_if_needed():
-    if not workspace.has_legacy():
-        return
-    print("Found results from before search folders (cv/, profiles/, results/ in the project).")
-    name = slug(questions.ask("Name for that search", "my-search"))
-    search, moved = workspace.migrate_legacy(name)
-    print(f"  Moved {len(moved)} files into {search.root}")
-
-
 def open_finder(path):
     if sys.platform == "darwin":
         subprocess.run(["open", str(path)], check=False)
@@ -307,7 +298,6 @@ def interactive():
         print("No terminal to ask questions in; use: python3 -m jobsearch run", file=sys.stderr)
         return 2
     try:
-        migrate_if_needed()
         while True:
             searches = workspace.all_searches()
             options = [(s.name, f"{s.name:16} {s.summary()} · {scheduler.schedule_text(s)}") for s in searches]
@@ -344,10 +334,6 @@ def main(argv=None):
 
     if args.command is None:
         return interactive()
-    if workspace.has_legacy():
-        print("Old layout found (cv/, profiles/, results/). Run `python3 -m jobsearch` once to move it "
-              "into a search folder.", file=sys.stderr)
-        return 2
     if args.command == "tick":
         scheduler.tick(force=args.force, only=args.search)
         return 0

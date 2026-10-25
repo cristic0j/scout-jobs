@@ -6,7 +6,8 @@ from dataclasses import asdict
 from .. import llm
 from ..detect import LEVELS, WORK_MODES
 from ..matching import keyword_pattern
-from ..preferences import NOTES_FILE, Preferences
+from .. import env
+from ..preferences import Preferences
 from ..profile import DUTCH_FILTERS, Profile, slug
 
 PREF_FIELDS = ["home", "location", "languages", "levels", "setups", "max_days", "dutch", "avoid"]
@@ -90,9 +91,10 @@ def _context(prefs):
     if prefs:
         parts.append("Saved preferences (already confirmed by the user, treat as known):\n"
                      + json.dumps(asdict(prefs), ensure_ascii=False))
-    if NOTES_FILE.exists():
-        parts.append(f"The candidate's own job-search notes ({NOTES_FILE.name}):\n"
-                     + NOTES_FILE.read_text(errors="ignore")[:20000])
+    notes = env.path("JOBSEARCH_NOTES")  # optional: your own job-search notes, used to suggest answers
+    if notes and notes.exists():
+        parts.append(f"The candidate's own job-search notes ({notes.name}):\n"
+                     + notes.read_text(errors="ignore")[:20000])
     return "\n\n".join(parts) or "No saved preferences or notes."
 
 

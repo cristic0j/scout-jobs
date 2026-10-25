@@ -3,7 +3,7 @@ from datetime import datetime, timedelta
 
 import pytest
 
-from jobsearch import env, matches, notify, output, scheduler, workspace
+from jobsearch import env, matches, notify, scheduler, workspace
 from jobsearch.profile import Profile
 
 
@@ -103,8 +103,8 @@ def test_ntfy_message(monkeypatch):
     rows = [{"Fit (1-10)": 7, "Company": "TicketSwap", "Job title": "Android Developer", "Travel": "~2 h 30",
              "Link": "https://l/2"},
             {"Fit (1-10)": 8, "Company": "bol", "Job title": "Backend Engineer", "Link": "https://l/1"}]
-    msg = notify.matches_message("cristian", rows, "/tmp/m.xlsx")
-    assert msg["title"] == "cristian: 2 new matches" and msg["message"].startswith("8 · bol — Backend Engineer")
+    msg = notify.matches_message("anna", rows, "/tmp/m.xlsx")
+    assert msg["title"] == "anna: 2 new matches" and msg["message"].startswith("8 · bol — Backend Engineer")
     notify.ntfy(notify.Settings(ntfy_topic="jobsearch-abc"), msg["title"], msg["message"], msg["links"])
     assert posted["url"] == "https://ntfy.sh" and posted["body"]["topic"] == "jobsearch-abc"
     assert posted["body"]["click"] == "https://l/1" and posted["body"]["actions"][0]["label"] == "bol"
@@ -120,7 +120,7 @@ def test_plist_runs_tick_every_15_minutes_and_at_login():
 
 
 def test_tick_runs_due_searches_and_notifies_new_matches(monkeypatch):
-    due = search_with_interval("due", last=NOON - timedelta(hours=6))
+    search_with_interval("due", last=NOON - timedelta(hours=6))
     search_with_interval("later", last=NOON - timedelta(hours=1))
     monkeypatch.setattr(scheduler, "online", lambda: True)
     monkeypatch.setenv("GEMINI_API_KEY", "k")

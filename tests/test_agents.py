@@ -11,9 +11,9 @@ from jobsearch.profile import Profile
 @pytest.fixture
 def search(tmp_path, monkeypatch):
     monkeypatch.setattr(workspace, "SEARCHES", tmp_path / "searches")
-    monkeypatch.setattr(planner, "NOTES_FILE", tmp_path / "missing.md")
+    monkeypatch.delenv("JOBSEARCH_NOTES", raising=False)
     monkeypatch.setattr(matcher.descriptions, "PATH", tmp_path / "desc.json")
-    monkeypatch.setattr("jobsearch.output.TRACKER", tmp_path / "no-tracker.xlsx")
+    monkeypatch.delenv("JOBSEARCH_TRACKER", raising=False)
     s = workspace.get("test").create()
     (s.cv_dir / "cv_android.txt").write_text("Android developer, Kotlin, 1.5 years.")
     return s

@@ -11,7 +11,6 @@ searches/<name>/travel.json         cached travel times from home
 """
 import hashlib
 import json
-import shutil
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
@@ -131,31 +130,3 @@ def same_cv(search):
     fp = search.cv_fingerprint()
     return next((s for s in all_searches() if fp and s.name != search.name and s.cv_fingerprint() == fp), None)
 
-
-LEGACY = {"cv": ROOT / "cv", "profiles": ROOT / "profiles", "results": ROOT / "results"}
-
-
-def has_legacy():
-    return any(p.exists() and any(p.iterdir()) for p in LEGACY.values())
-
-
-def migrate_legacy(name):
-    """Move the pre-folders layout (cv/, profiles/, results/ in the project root) into searches/<name>/."""
-    search = get(name).create()
-    moves = []
-    for kind, src in LEGACY.items():
-        if not src.exists():
-            continue
-        for f in src.iterdir():
-            if f.name == "preferences.json":
-                dest = search.prefs_path
-            elif f.name == "matches.xlsx":
-                dest = search.matches_path
-            else:
-                dest = {"cv": search.cv_dir, "profiles": search.profiles_dir, "results": search.results_dir}[kind] / f.name
-            shutil.move(str(f), dest)
-            moves.append(dest)
-        src.rmdir()
-    if search.cv_files() and search.profile_names():
-        search.save_state(cv_fingerprint=search.cv_fingerprint())
-    return search, moves

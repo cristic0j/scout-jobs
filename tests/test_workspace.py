@@ -1,5 +1,3 @@
-import json
-
 import pytest
 
 from jobsearch import llm, travel, workspace
@@ -13,8 +11,8 @@ def tmp_searches(tmp_path, monkeypatch):
 
 
 def test_search_folder_and_cv_fingerprint():
-    s = workspace.get("Cristian CV!").create()
-    assert s.name == "cristian-cv" and s.cv_dir.is_dir() and s.cv_fingerprint() == ""
+    s = workspace.get("Anna CV!").create()
+    assert s.name == "anna-cv" and s.cv_dir.is_dir() and s.cv_fingerprint() == ""
     (s.cv_dir / "cv.pdf").write_bytes(b"v1")
     (s.cv_dir / "notes.png").write_bytes(b"ignored")
     fp = s.cv_fingerprint()
@@ -41,22 +39,6 @@ def test_profiles_live_in_their_search():
     assert s.result_path(Profile(name="android")) == s.results_dir / "android.xlsx"
     assert workspace.get("other").create().profile_names() == []
 
-
-def test_migrate_legacy(tmp_path, monkeypatch):
-    legacy = {k: tmp_path / k for k in ("cv", "profiles", "results")}
-    monkeypatch.setattr(workspace, "LEGACY", legacy)
-    for d in legacy.values():
-        d.mkdir()
-    (legacy["cv"] / "cv.pdf").write_bytes(b"x")
-    (legacy["profiles"] / "android.json").write_text(json.dumps({"name": "android"}))
-    (legacy["profiles"] / "preferences.json").write_text("{}")
-    (legacy["results"] / "android.xlsx").write_bytes(b"x")
-    (legacy["results"] / "matches.xlsx").write_bytes(b"x")
-    assert workspace.has_legacy()
-    s, moved = workspace.migrate_legacy("cristian")
-    assert len(moved) == 5 and not workspace.has_legacy()
-    assert s.prefs_path.exists() and s.matches_path.exists() and s.profile_names() == ["android"]
-    assert not s.cv_changed()  # migrated search counts as set up with this CV
 
 
 def test_travel_cache_and_place_keys(monkeypatch):

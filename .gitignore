@@ -1,10 +1,19 @@
-__pycache__/
-.desc_cache.json
-nl_jobs.xlsx
-.DS_Store
-cv/
-results/
-profiles/preferences.json
-.pytest_cache/
+# your data: CVs, preferences, results, matches, Google Sheet link
 searches/
 logs/
+
+# caches
+.desc_cache.json
+__pycache__/
+.pytest_cache/
+
+# keys never belong in the repo (the Google key lives in ~/.config/jobsearch/)
+*.json.key
+service-account*.json
+.env
+
+# editors / OS
+.DS_Store
+.venv/
+.idea/
+.vscode/

@@ -1,13 +1,10 @@
 """What the user wants from any job, shared by all profiles of a search. Asked during setup, then reused."""
 import json
 from dataclasses import asdict, dataclass, field, fields
-from pathlib import Path
 
 from .detect import WORK_MODES
 from .profile import Profile
 
-# Optional notes the planner may use to suggest answers (Cristian's playbook).
-NOTES_FILE = Path.home() / "Desktop/Jobs/JOB_SEARCH.md"
 NOT_ASKED = -1
 
 
