@@ -16,13 +16,25 @@ def fetch(profile):
         except Exception as e:  # one broken board shouldn't stop the run
             return name, [], e
 
-    jobs = []
+    jobs, failed = [], []
     with ThreadPoolExecutor(12) as ex:
         for name, got, err in ex.map(run, tasks):
             if err:
                 print(f"  {name}: failed ({err.__class__.__name__}: {err})")
+                failed.append(name)
+            elif name == "linkedin" and profile.search_terms and not got:
+                print("  linkedin: no results at all (blocked or changed?)")
+                failed.append(name)
             jobs += got
-    return jobs
+    return jobs, [n for n, _ in tasks], failed
+
+
+def track_failures(search, names, failed):
+    """Failures in a row per source, so the scheduler can warn when one keeps failing."""
+    counts = search.state().get("source_failures", {})
+    for n in names:
+        counts[n] = counts.get(n, 0) + 1 if n in failed else 0
+    search.save_state(source_failures={n: c for n, c in counts.items() if c})
 
 
 def check_language(jobs, cache):
@@ -47,7 +59,8 @@ def add_travel(jobs, profile, search):
 def run(profile, search):
     """Fetch and merge into the profile's results file. Returns the number of new rows."""
     print(f"\nFetching {', '.join(profile.sources)} for '{profile.name}'...")
-    jobs = fetch(profile)
+    jobs, names, failed = fetch(profile)
+    track_failures(search, names, failed)
     print(f"  {len(jobs)} postings in {profile.location} fetched")
 
     for j in jobs:

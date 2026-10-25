@@ -5,13 +5,17 @@
   python3 -m jobsearch review [--search NAME]   # review unprocessed jobs now (--rescore: judge all again)
   python3 -m jobsearch setup --search NAME      # (re)plan a search from its CV
   python3 -m jobsearch list                     # show searches and their roles
+  python3 -m jobsearch schedule --search NAME --every 5h   # automatic background runs (or --every off)
+  python3 -m jobsearch schedule                 # status of all searches
+  python3 -m jobsearch notify --test            # send a test notification
+  python3 -m jobsearch tick                     # what the background agent runs every 15 min
 """
 import argparse
 import subprocess
 import sys
-from datetime import date
+from datetime import date, datetime
 
-from . import llm, pipeline, questions, setup, workspace
+from . import llm, notify, pipeline, questions, scheduler, setup, workspace
 from .agents import matcher
 from .preferences import Preferences
 from .profile import slug
@@ -32,13 +36,19 @@ def review(search, profiles=None, max_review=60, rescore=False):
 
 
 def run(search, profiles=None, do_review=True, max_review=60):
-    print(f"\n=== Search '{search.name}' ===")
-    for p in profiles or search.profiles():
-        added = pipeline.run(p, search)
-        # Unprocessed rows are new jobs (this run's, or ones left over by --max-review last time).
-        if do_review and not review(search, [p], max_review) and not added:
-            print("  No new jobs, review skipped.")
-    search.save_state(last_run=date.today().isoformat())
+    with scheduler.lock() as got:
+        if not got:
+            print("A background run is busy right now; try again in a few minutes "
+                  "(or check 'Show the last background run').")
+            return
+        print(f"\n=== Search '{search.name}' ===")
+        for p in profiles or search.profiles():
+            added = pipeline.run(p, search)
+            # Unprocessed rows are new jobs (this run's, or ones left over by --max-review last time).
+            if do_review and not review(search, [p], max_review) and not added:
+                print("  No new jobs, review skipped.")
+        search.save_state(last_run=date.today().isoformat(),
+                          last_run_at=datetime.now().isoformat(timespec="minutes"))
 
 
 def selected(name):
@@ -105,8 +115,12 @@ def open_search(search):
     while True:
         if not search.cv_files() and not search.profile_names():
             print(f"\nNo CV yet. Put it in {search.cv_dir}, or add a profile by hand.")
-        action = questions.choose_one(f"Search '{search.name}': {search.summary()}", [
+        every = search.state().get("interval_minutes", 0)
+        action = questions.choose_one(f"Search '{search.name}': {search.summary()}\n  {scheduler.schedule_text(search)}", [
             ("run", "Run now (fetch, review only new jobs)"),
+            ("bg", "Run now in the background (you can close the terminal)"),
+            ("schedule", f"Automatic runs ({scheduler.every_text(every)})"),
+            ("log", "Show the last background run"),
             ("prefs", "Change preferences"),
             ("plan", "Re-plan roles from the CV"),
             ("review", "Review unprocessed jobs"),
@@ -117,6 +131,13 @@ def open_search(search):
             return
         if action == "run":
             run(search)
+        elif action == "bg":
+            scheduler.run_in_background(search)
+            print(f"  Started. Progress goes to {scheduler.LOG}; you'll get a notification for new matches.")
+        elif action == "schedule":
+            ask_schedule(search)
+        elif action == "log":
+            print(f"\n{scheduler.last_log()}")
         elif action == "prefs":
             setup.change_preferences(search)
         elif action == "plan":
@@ -131,16 +152,111 @@ def open_search(search):
                 run(search, [profile])
 
 
+def ask_schedule(search):
+    current = search.state().get("interval_minutes", 0)
+    options = [(m, scheduler.every_text(m)) for m in (60, 180, 300, 720, 1440)]
+    if current and current not in dict(options):
+        options.append((current, f"{scheduler.every_text(current)} (now)"))
+    options += [(-1, "Other: type an interval (e.g. 4h, 2 days)"), (0, "Off")]
+    minutes = questions.choose_one(f"How often should '{search.name}' run in the background?",
+                                   options, current or 300)
+    while minutes == -1:
+        minutes = scheduler.parse_interval(questions.ask("Interval"))
+        if minutes is None:
+            print(f"  Try e.g. 4h, 90 min or 2 days (at least {scheduler.MIN_INTERVAL} min).")
+            minutes = -1
+    scheduler.set_interval(search, minutes)
+    if minutes:
+        print(f"  '{search.name}' now runs {scheduler.every_text(minutes)} in the background, also after the Mac "
+              "slept (it catches up once when it wakes). New matches → notification.")
+        if not notify.SETTINGS.exists():
+            print("  Set up notifications from the main menu → Notifications.")
+    else:
+        print(f"  Automatic runs for '{search.name}' are off.")
+
+
+def ask_notifications():
+    st = notify.Settings.load()
+    while True:
+        print(f"\nNotifications:\n{st.describe()}")
+        action = questions.choose_one("Change:", [
+            ("mac", f"Mac banner: turn {'off' if st.mac else 'on'}"),
+            ("ntfy", "Phone push (ntfy): set up / change / turn off"),
+            ("fit", "Minimum fit to announce"),
+            ("quiet", "Quiet hours"),
+            ("alerts", f"Problem alerts: turn {'off' if st.alerts else 'on'}"),
+            ("test", "Send a test notification"),
+            ("done", "Done")], "done")
+        if action == "done":
+            st.save()
+            return
+        if action == "mac":
+            st.mac = not st.mac
+        elif action == "alerts":
+            st.alerts = not st.alerts
+        elif action == "fit":
+            st.min_fit = min(10, questions.ask_int("Announce matches with fit at least (1-10)", st.min_fit))
+        elif action == "quiet":
+            st.quiet_from = questions.ask_int("Quiet from hour (0-23; same as 'until' = no quiet hours)",
+                                              st.quiet_from, allow_zero=True) % 24
+            st.quiet_to = questions.ask_int("Quiet until hour (0-23)", st.quiet_to, allow_zero=True) % 24
+        elif action == "ntfy":
+            setup_ntfy(st)
+        elif action == "test":
+            st.save()
+            notify.deliver([{"title": "Job search", "message": "Test notification: this is how new matches arrive.",
+                             "links": [["ntfy", "https://ntfy.sh"]]}], st, now=datetime(2000, 1, 1, 12))
+            print("  Sent (if nothing shows up: System Settings → Notifications → Script Editor / terminal-notifier).")
+
+
+def setup_ntfy(st):
+    if st.ntfy_topic and questions.ask_yes(f"Phone push is on (topic {st.ntfy_topic}). Turn it off?", False):
+        st.ntfy_topic = ""
+        return
+    topic = st.ntfy_topic or notify.new_topic()
+    print(f"""
+  1. Install the free "ntfy" app (App Store / Google Play).
+  2. In the app: + → Subscribe to topic → type:  {topic}
+     (Server: {st.ntfy_server}. Anyone who knows this name can read the messages, so keep it to yourself.
+      Messages contain job titles, companies and links, never your CV.)""")
+    while True:
+        typed = questions.ask("Topic (Enter = use this one)", topic).strip()
+        problem = notify.topic_problem(typed)
+        if not problem or questions.ask_yes(f"  {problem} Use it anyway?", False):
+            break
+    st.ntfy_topic = typed
+    st.save()
+    print(f"  Topic saved: {typed}  (in the app it must be exactly this, capitals included,"
+          f" on server {st.ntfy_server})")
+    if questions.ask_yes("Send a test message to your phone now?"):
+        try:
+            notify.ntfy(st, "Job search", "Phone notifications work. New matches will show up here.",
+                        [("ntfy", "https://ntfy.sh")])
+            arrived = notify.ntfy_received(st, "Phone notifications work")
+            print("  Sent, and the ntfy server has it. Nothing on your phone? Then the app isn't subscribed to "
+                  "exactly this topic, or notifications for the ntfy app are off in the phone's settings."
+                  if arrived else "  Sent, but the server doesn't show it yet; try the test again in a minute.")
+        except Exception as e:
+            print(f"  Couldn't send: {e}")
+
+
 def interactive():
     if not sys.stdin.isatty():
         print("No terminal to ask questions in; use: python3 -m jobsearch run", file=sys.stderr)
         return 2
     try:
         migrate_if_needed()
-        searches = workspace.all_searches()
-        options = [(s.name, f"{s.name:16} {s.summary()}") for s in searches] + [("", "New search")]
-        pick = questions.choose_one("Your searches:", options, searches[0].name if searches else "")
-        open_search(workspace.get(pick) if pick else new_search())
+        while True:
+            searches = workspace.all_searches()
+            options = [(s.name, f"{s.name:16} {s.summary()} · {scheduler.schedule_text(s)}") for s in searches]
+            options += [("", "New search"), ("#notify", "Notifications"), ("#quit", "Quit")]
+            pick = questions.choose_one("Your searches:", options, searches[0].name if searches else "")
+            if pick == "#quit":
+                return 0
+            if pick == "#notify":
+                ask_notifications()
+                continue
+            open_search(workspace.get(pick) if pick else new_search())
     except (KeyboardInterrupt, EOFError):
         print("\nCancelled.")
         return 1
@@ -153,7 +269,10 @@ def interactive():
 def main(argv=None):
     ap = argparse.ArgumentParser(description="Job search: one folder per CV → roles → results → matches",
                                  epilog=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("command", nargs="?", choices=["setup", "run", "review", "list"])
+    ap.add_argument("command", nargs="?", choices=["setup", "run", "review", "list", "schedule", "notify", "tick"])
+    ap.add_argument("--every", help="schedule: interval like 5h, 90 min, 1d, or off")
+    ap.add_argument("--force", action="store_true", help="tick: run now even if not due")
+    ap.add_argument("--test", action="store_true", help="notify: send a test notification")
     ap.add_argument("--search", help="only this search (folder name in searches/)")
     ap.add_argument("--profile", help="run: only this role of the search")
     ap.add_argument("--no-review", action="store_true", help="run: fetch only, don't call the matcher")
@@ -167,6 +286,31 @@ def main(argv=None):
         print("Old layout found (cv/, profiles/, results/). Run `python3 -m jobsearch` once to move it "
               "into a search folder.", file=sys.stderr)
         return 2
+    if args.command == "tick":
+        scheduler.tick(force=args.force, only=args.search)
+        return 0
+    if args.command == "schedule":
+        if args.every is not None:
+            if not args.search:
+                print("schedule --every needs --search NAME", file=sys.stderr)
+                return 2
+            minutes = scheduler.parse_interval(args.every)
+            if minutes is None:
+                print(f"Can't read '{args.every}'. Try 5h, 90 min, 1d or off (min {scheduler.MIN_INTERVAL} min).",
+                      file=sys.stderr)
+                return 2
+            scheduler.set_interval(selected(args.search)[0], minutes)
+        print(f"Background agent: {'running' if scheduler.installed() else 'not installed'} "
+              f"(checks every {scheduler.TICK_SECONDS // 60} min; log: {scheduler.LOG})")
+        for s in workspace.all_searches():
+            print(f"  {s.name:16} {scheduler.schedule_text(s)}")
+        return 0
+    if args.command == "notify":
+        st = notify.Settings.load()
+        print(st.describe())
+        if args.test:
+            notify.deliver([{"title": "Job search", "message": "Test notification."}], st, now=datetime(2000, 1, 1, 12))
+        return 0
     if args.command == "list":
         for s in workspace.all_searches():
             print(f"{s.name}: {s.summary()}")

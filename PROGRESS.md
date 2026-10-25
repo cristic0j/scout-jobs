@@ -44,14 +44,27 @@ boards, Jooble, Adzuna), role/seniority/age filters, Dutch-language detection wi
 - Agents (Gemini): `agents/planner.py` (CV → roles, preferences, open questions), `agents/matcher.py`
   (unprocessed rows, batches of 8, full descriptions, max 60 per profile per run, tracked rows skipped
   without a call), `matches.py`. Runs with no unprocessed rows make no Gemini call.
-- 30 tests (`pytest tests/`), agents tested with a fake LLM.
+- First real run with the CV (3 roles, 94 jobs). Then: one folder per search, hybrid by max travel time
+  (Gemini estimates, cached), matcher limits enforced in code, verdicts reused across roles, fuzzy
+  duplicate merging, re-score. Re-scored real matches: 35 → 11, all inside the user's rules.
+- Background runs: one launchd agent (`com.jobsearch.tick`) wakes every 15 min and at login; each search
+  has its own interval and runs when due, once after sleep (no pile-up). Failed runs retry with backoff
+  (30 min, 1 h, 2 h …), offline ticks don't count, one run at a time (lock), log in `logs/jobsearch.log`.
+  Keys are read from the `export` lines in `~/.zshrc` (never copied into the plist).
+- Notifications: Mac banner + phone push via ntfy, fit threshold, quiet hours (queued, then one summary),
+  problem alerts (a source failing 3 runs in a row, runs failing, missing key).
+- 61 tests (`pytest tests/`), agents and launchd tested with fakes; agent install verified on macOS.
 
-**Not yet verified with the real API**: setup and review need `GEMINI_API_KEY` and a CV in `cv/`.
+## Background runs & notifications
+```
+python3 -m jobsearch                              menu → search → "Automatic runs" / "Run now in the background"
+                                                  menu → "Notifications" (Mac, phone/ntfy, fit, quiet hours)
+python3 -m jobsearch schedule --search NAME --every 5h    (or --every off; no args = status)
+python3 -m jobsearch notify --test
+python3 -m jobsearch tick [--force --search NAME]         what the agent runs
+```
 
 ## Next steps
-1. **First real run**: add the key + CV, run `setup`, check the suggested roles and that it only asks what's
-   missing; run `run`, spot-check ~5 matches against the postings, tune the prompts/threshold.
-2. **Run every 5 hours**: launchd job calling `python3 -m jobsearch run`. It needs `GEMINI_API_KEY` and
-   `JOOBLE_KEY` in the job's environment (launchd doesn't read `~/.zshrc`).
-3. **Notify** when new matches land (macOS notification / push).
-4. Optional: config for board slugs per category (current boards are tech companies).
+1. Optional: Telegram bot with Applied / Not interested buttons that write back into matches.xlsx.
+2. Optional: board slugs per category (current boards are tech companies).
+3. Optional: email digest (daily/weekly).
