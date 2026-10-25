@@ -2,3 +2,7 @@ __pycache__/
 .desc_cache.json
 nl_jobs.xlsx
 .DS_Store
+cv/
+results/
+profiles/preferences.json
+.pytest_cache/

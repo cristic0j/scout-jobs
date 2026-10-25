@@ -1,82 +1,56 @@
-# NL job fetcher — progress & roadmap
+# Job search agent — progress & roadmap
 
-Goal: automatically find software engineering jobs in the Netherlands that fit Cristian,
-and get notified only about the ones that truly fit.
+Goal: give it a CV, let an agent work out which jobs fit, ask only what it can't tell, fetch those jobs
+every 5 hours, and have a second agent put the genuinely fitting new jobs in a matches file.
 
-Related: the manual job-search playbook and tracker live in `~/Desktop/Jobs`
-(`JOB_SEARCH.md`, `jobs.xlsx`). This script only **reads** `jobs.xlsx`; it never writes it.
+Related: the manual playbook and tracker live in `~/Desktop/Jobs` (`JOB_SEARCH.md`, `jobs.xlsx`).
+The code only **reads** `jobs.xlsx` (to skip jobs already tracked); it never writes it.
 
-## Done (2026-10-24)
-
-`fetch_nl_jobs.py` — one script that pulls NL postings into `nl_jobs.xlsx`
-(one sheet per day, `NL YYYY-MM-DD`, newest first).
-
-**Sources**
-| Source | Key | Notes |
-|---|---|---|
-| LinkedIn guest search | none | Most results (~210/run). Sleeps between requests to avoid HTTP 429. |
-| Arbeitnow | none | Has many arbeitnow.nl postings. Occasionally returns non-JSON (rate limit), just rerun. |
-| Greenhouse / Lever / Ashby / Recruitee company boards | none | Slugs in `BOARDS` at the top of the script (26 companies). Add more freely. |
-| Jooble | `JOOBLE_KEY` (in `~/.zshrc`) | Key only works on international jooble.org, few NL results. `nl.jooble.org` rejects the key. |
-| Adzuna | `ADZUNA_APP_ID`, `ADZUNA_APP_KEY` | Not free for us, skipped automatically when keys are unset. |
-
-**Filters**
-- Roles: software engineering, full-stack, backend, frontend, web, mobile/Android, Java, Kotlin, .NET, etc. (`SEARCH_TERMS`, `TECH`).
-- Dropped: any title mentioning Python, data/analytics, QA/test, support, sales, electrical/mechanical (`NOT_SWE`).
-- Dropped: senior/lead/staff/manager titles unless `--all`.
-- Max age `--days` (default 30).
-- Dedup by company+title; marks `Already in tracker` (vs `jobs.xlsx`) and `New since last run`.
-
-**Dutch-only filter** — done but opt-in (`--dutch-filter`) because it is slow on the first run:
-it opens every LinkedIn posting (~1.2 s each) to read the description. Descriptions are cached in
-`.desc_cache.json` (209 cached), so later runs only fetch new ones. Labels: `Dutch` (posting
-written in Dutch), `Dutch required`, `English`. Spot-checked: "Dutch is a plus" / "no Dutch
-required" are correctly treated as English. Last full run: 253 jobs → 125 English, 116 Dutch,
-12 Dutch required.
-
-**Usage**
+## How it works
 ```
-python3 fetch_nl_jobs.py                 # fast, all matching jobs
-python3 fetch_nl_jobs.py --days 7
-python3 fetch_nl_jobs.py --all           # include senior titles
-python3 fetch_nl_jobs.py --no-linkedin   # seconds, but far fewer jobs
-python3 fetch_nl_jobs.py --dutch-filter  # drop Dutch-only jobs
-python3 fetch_nl_jobs.py --hybrid        # (in progress, see below)
+python3 -m jobsearch setup        cv/*.pdf → planner agent (Gemini) → roles + preferences
+                                  → asks only what the CV/notes don't answer, + "any other roles?"
+                                  → profiles/<role>.json, profiles/preferences.json
+python3 -m jobsearch run          every profile: fetch → filter → merge into results/<role>.xlsx
+                                  → if there are unprocessed rows: matcher agent (Gemini) judges them
+                                    against the CV → Processed + AI fit/verdict/reason columns
+                                  → fit ≥ 7 → results/matches.xlsx
+python3 -m jobsearch review       matcher only, no fetch
+python3 -m jobsearch manual       build a search by hand with the question menus (no AI)
+python3 -m jobsearch list         saved profiles
+python3 -m jobsearch              setup on first use, otherwise a menu
 ```
+`fetch_nl_jobs.py` still works and is the same as `python3 -m jobsearch`.
 
-Note: `nl_jobs.xlsx` is not in the folder right now (generated, not committed); the next run recreates it.
+Needs `GEMINI_API_KEY` in `~/.zshrc` (model `gemini-3.8-flash`, override with `GEMINI_MODEL`).
+Put CV versions (PDF, one file per version) in `cv/`. `cv/`, `results/` and `profiles/preferences.json` are gitignored.
 
-## Next steps (in order)
+## Done
+**2026-10-24**: single-script NL fetcher (LinkedIn guest search, Arbeitnow, Greenhouse/Lever/Ashby/Recruitee
+boards, Jooble, Adzuna), role/seniority/age filters, Dutch-language detection with description cache.
 
-### 1. Refactor
-Split the single script into a small package so new sources/filters are easy to add:
-- `sources/` — one module per source, each returning a common `Job` dataclass
-  (title, company, location, posted, link, work_mode, desc, source).
-- `filters.py` — role/seniority/age/Python/Dutch/hybrid filters as composable functions.
-- `config` (YAML or TOML) — search terms, board slugs, regexes, defaults, instead of constants in code.
-- `output.py` — Excel writer + dedup/"new since last run" state (move state to a small JSON/SQLite file
-  instead of re-reading the xlsx).
-- Tests for the language and work-mode detectors with saved sample postings.
+**2026-10-25**
+- Refactored into the `jobsearch/` package: `sources/` (one module per source), `filters.py`, `detect.py`,
+  `matching.py`, `profile.py`, `presets.py`, `output.py`, `pipeline.py`, `questions.py`, `cli.py`.
+- Searches are fully configurable per profile: job category presets (software, data, design, marketing,
+  sales, support, finance, HR, operations, custom), search terms, title include/exclude keywords,
+  seniority (internship/junior/medior/senior), max age, work mode, Dutch filter, location, sources, boards.
+- Hybrid feature finished as a general work-mode filter (hybrid/remote/on-site + keep-unknown option).
+  Verified on a real run; tightened the description regex after spot-checking ("hybrid approach",
+  "hybride cloudomgevingen" were false positives).
+- Results: one `Jobs` sheet per profile, merged in place by link. `Processed`/`First seen` are never
+  overwritten, unknown columns are kept, unprocessed rows are sorted first.
+- Agents (Gemini): `agents/planner.py` (CV → roles, preferences, open questions), `agents/matcher.py`
+  (unprocessed rows, batches of 8, full descriptions, max 60 per profile per run, tracked rows skipped
+  without a call), `matches.py`. Runs with no unprocessed rows make no Gemini call.
+- 30 tests (`pytest tests/`), agents tested with a fake LLM.
 
-### 2. Finish the hybrid feature
-Code is written but **not yet run or verified**:
-- `--hybrid` flag keeps only hybrid jobs; column renamed `Remote` → `Work mode`.
-- Work mode from structured fields: Ashby `workplaceType`, Lever `workplaceType`,
-  Recruitee `hybrid`/`remote`/`on_site`.
-- LinkedIn: adds `f_WT=3` to the search when `--hybrid` (LinkedIn's hybrid tag is often wrong).
-- Others (Greenhouse, Arbeitnow, Jooble): regex `HYBRID` on title/location/description
-  ("hybrid", "hybride", "N days in the office").
-- To do: run it, spot-check results, decide whether jobs with unknown work mode should be kept.
+**Not yet verified with the real API**: setup and review need `GEMINI_API_KEY` and a CV in `cv/`.
 
-### 3. Run every 5 hours
-Schedule the fetch (launchd on macOS, or a Claude Code scheduled routine) so `nl_jobs.xlsx` always has the newest jobs.
-Needs `JOOBLE_KEY` in the job's environment (launchd doesn't read `~/.zshrc`).
-
-### 4. AI agent that keeps only truly fitting jobs
-After each fetch, an agent reads the new jobs (with descriptions) and scores them against
-Cristian's profile (`~/Desktop/Jobs/JOB_SEARCH.md`: junior/medior, no Dutch, Android/Kotlin/Java/full-stack,
-lives in Maastricht). Returns only genuine fits with a short reason. Never invent links or dates.
-
-### 5. MCP tools for the agent
-- Tool to append the fitting new jobs to a file (e.g. a `Fits` sheet / jobs file).
-- Tool to send a notification (e.g. macOS notification / push) when something new is found.
+## Next steps
+1. **First real run**: add the key + CV, run `setup`, check the suggested roles and that it only asks what's
+   missing; run `run`, spot-check ~5 matches against the postings, tune the prompts/threshold.
+2. **Run every 5 hours**: launchd job calling `python3 -m jobsearch run`. It needs `GEMINI_API_KEY` and
+   `JOOBLE_KEY` in the job's environment (launchd doesn't read `~/.zshrc`).
+3. **Notify** when new matches land (macOS notification / push).
+4. Optional: config for board slugs per category (current boards are tech companies).
