@@ -6,6 +6,7 @@ from .agents import planner
 from .detect import LEVELS, WORK_MODES
 from .preferences import NOT_ASKED, Preferences
 from .profile import DUTCH_FILTERS
+from .travel import parse, text
 from .questions import ask, ask_int, ask_yes, choose_many, choose_one, edit_list, split_list
 
 
@@ -39,15 +40,29 @@ def ask_setups(prefs, plan):
         if not prefs.onsite_places:
             print("  No towns chosen: on-site jobs will be accepted anywhere.")
     if "hybrid" in prefs.setups:
-        prefs.max_hybrid_minutes = choose_one(
-            "Max travel time for a hybrid job (one way, public transport, from home):",
-            TRAVEL_LIMITS, prefs.max_hybrid_minutes if prefs.max_hybrid_minutes != NOT_ASKED else 90)
+        prefs.max_hybrid_minutes = ask_travel_limit(prefs.max_hybrid_minutes)
         prefs.max_office_days = choose_one(
             "Max office days per week for hybrid jobs outside your on-site towns:",
             OFFICE_DAYS, prefs.max_office_days)
 
 
 TRAVEL_LIMITS = [(45, "45 min"), (60, "1 h"), (90, "1 h 30"), (120, "2 h"), (0, "any distance")]
+OTHER = -2
+
+
+def ask_travel_limit(current):
+    options = list(TRAVEL_LIMITS)
+    if current > 0 and current not in dict(options):  # a value typed earlier stays selectable
+        options.insert(-1, (current, f"{text(current)[1:]} (your earlier choice)"))
+    options.append((OTHER, "Other: type a time (e.g. 3h, 2h30, 150 min)"))
+    picked = choose_one("Max travel time for a hybrid job (one way, public transport, from home):",
+                        options, current if current != NOT_ASKED else 90)
+    while picked == OTHER:
+        minutes = parse(ask("Max travel time"))
+        if minutes:
+            return minutes
+        print("  Didn't understand that; try e.g. 3h, 2h30 or 150 min.")
+    return picked
 OFFICE_DAYS = [(1, "1 day"), (2, "2 days"), (3, "3 days"), (4, "4 days"), (0, "any")]
 
 

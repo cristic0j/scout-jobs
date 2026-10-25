@@ -152,7 +152,7 @@ def results_with(search, profile, jobs):
 
 def verdict(id, fit, v="match", **kw):
     return {"id": id, "fit": fit, "verdict": v, "why": "Kotlin", "caveats": "", "breaks_setup": False,
-            "office_days": -1, "years_required": -1, "exceeds_experience": False, **kw}
+            "office_days": -1, "years_required": -1, "exceeds_experience": False, "avoided_tech": False, **kw}
 
 
 def test_matcher_reviews_only_unprocessed(monkeypatch, search):
@@ -265,3 +265,57 @@ def test_rescore_never_copies_stale_verdicts(monkeypatch, search):
     for prof in (a, b):
         assert output.read(search.result_path(prof))[1][0]["AI fit"] == 3
     assert output.read(search.matches_path, matches.SHEET, matches.COLUMNS)[1] == []
+
+
+def test_travel_limit_accepts_typed_time(monkeypatch):
+    from jobsearch import setup, travel
+    for typed, minutes in [("3h", 180), ("3", 180), ("2h30", 150), ("2:30", 150), ("2 h 30", 150),
+                           ("150 min", 150), ("90", 90), ("3 uur", 180)]:
+        assert travel.parse(typed) == minutes, typed
+    assert travel.parse("soon") is None and travel.parse("~2 h 30") == 150
+    answers(monkeypatch, "6", "a while", "3h")  # Other → unreadable → 3 hours
+    assert setup.ask_travel_limit(90) == 180
+    answers(monkeypatch, "")  # the typed value is offered next time and Enter keeps it
+    assert setup.ask_travel_limit(180) == 180
+
+
+def test_avoided_main_technology_is_capped(monkeypatch, search):
+    p = Profile(name="backend", cv=["cv_android.txt"])
+    results_with(search, p, [make("Software Engineer", "https://x/1")])
+    fake(monkeypatch, {"results": [verdict(0, 8, avoided_tech=True)]})
+    matcher.review(p, Preferences(avoid=["python"]), search, today="2026-10-25")
+    row = output.read(search.result_path(p))[1][0]
+    assert (row["AI fit"], row["AI verdict"]) == (4, "no") and "avoid list" in row["AI reason"]
+
+
+def test_existing_duplicate_matches_are_merged(tmp_path):
+    path = tmp_path / "m.xlsx"
+    rows = [{"Found": "2026-10-25", "Fit (1-10)": 7, "Job title": "Android Engineer, Frontend Technologies",
+             "Company": "Vinted", "Link": "https://linkedin/1", "Applied?": ""},
+            {"Found": "2026-10-25", "Fit (1-10)": 7, "Job title": "Android Engineer, Frontend Technologies",
+             "Company": "Vinteden", "Link": "https://arbeitnow/1", "Applied?": "Yess"}]
+    output.write(path, matches.COLUMNS + ["Applied?"], rows, matches.SHEET)  # as an older version left it
+    matches.add([{"Found": "2026-10-26", "Fit (1-10)": 8, "Job title": "Other", "Company": "X",
+                  "Link": "https://x/2"}], path)
+    _, out = output.read(path, matches.SHEET, matches.COLUMNS)
+    vinted = [r for r in out if r["Job title"].startswith("Android")]
+    assert len(vinted) == 1 and vinted[0]["Applied?"] == "Yess"  # user column kept from the duplicate
+
+
+def test_model_cannot_reject_hybrid_within_travel_limit(monkeypatch, search):
+    p = Profile(name="android", cv=["cv_android.txt"], onsite_places=["Maastricht"], max_hybrid_minutes=180,
+                max_office_days=2)
+    jobs = [make("Hybrid Amsterdam", "https://x/1", "Amsterdam"), make("Hybrid Groenlo", "https://x/2", "Groenlo"),
+            make("Remote tag, Delft office", "https://x/3", "Delft"), make("Hybrid 4 days", "https://x/4", "Utrecht")]
+    for j, mode in zip(jobs, ["hybrid", "hybrid", "remote", "hybrid"]):
+        j.work_mode = mode
+    jobs[0].travel, jobs[1].travel, jobs[3].travel = 150, 200, 120
+    results_with(search, p, jobs)
+    fake(monkeypatch, {"results": [verdict(0, 8, breaks_setup=True), verdict(1, 8, breaks_setup=True),
+                                   verdict(2, 8, breaks_setup=True), verdict(3, 8, office_days=4)]})
+    matcher.review(p, Preferences(), search, today="2026-10-25")
+    by = {r["Job title"]: r for r in output.read(search.result_path(p))[1]}
+    assert by["Hybrid Amsterdam"]["AI fit"] == 8          # 2 h 30 ≤ 3 h: the model's flag is overruled
+    assert by["Hybrid Groenlo"]["AI verdict"] == "no"     # 3 h 20 > 3 h
+    assert by["Remote tag, Delft office"]["AI verdict"] == "no"  # no travel known: the model's flag counts
+    assert by["Hybrid 4 days"]["AI verdict"] == "no"      # office days still enforced

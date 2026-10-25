@@ -7,7 +7,7 @@ import json
 from dataclasses import asdict
 from datetime import date
 
-from .. import descriptions, filters, llm, matches, output, pipeline
+from .. import descriptions, filters, llm, matches, output, pipeline, travel
 from ..models import Job
 from ..sources import linkedin
 
@@ -26,9 +26,11 @@ RESULT = {"type": "object", "properties": {"results": {"type": "array", "items":
                    "office_days": {"type": "integer", "description": "office days per week required; -1 unknown"},
                    "years_required": {"type": "integer", "description": "years of experience asked; -1 none"},
                    "exceeds_experience": {"type": "boolean",
-                                          "description": "asks clearly more experience than the CV shows"}},
+                                          "description": "asks clearly more experience than the CV shows"},
+                   "avoided_tech": {"type": "boolean",
+                                    "description": "the job's main language/technology is on the avoid list"}},
     "required": ["id", "fit", "verdict", "why", "caveats", "breaks_setup", "office_days", "years_required",
-                 "exceeds_experience"]}}}, "required": ["results"]}
+                 "exceeds_experience", "avoided_tech"]}}}, "required": ["results"]}
 
 SYSTEM = """You screen job postings for the candidate whose CV file(s) are attached, using their preferences.
 Score each job's fit 1-10: 9-10 = apply right away, 7-8 = good fit, 5-6 = a stretch, 1-4 = not a fit.
@@ -36,8 +38,11 @@ Score low when the posting needs something the candidate lacks or rules out: a l
 a role or technology they want to avoid, or much more seniority than they have.
 Work setup: read the description for the REAL setup, location and office days; job-board tags are often
 wrong (a job tagged remote may say "hybrid in Delft"). Set breaks_setup=true when the real setup breaks the
-work-setup rule, e.g. on-site outside the on-site towns, or hybrid where the travel time from home is above
-the limit. Each job lists its estimated travel time from home when known.
+work-setup rule: on-site outside the on-site towns, or an office in a different, farther city than listed.
+Travel time and office days are checked in code from travel_from_home and office_days, so do NOT set
+breaks_setup because of travel time when travel_from_home is given; just report office_days.
+Avoided technology: set avoided_tech=true when the job's main language or technology (what most of the
+work is in) is on the candidate's avoid list, even if the title doesn't mention it.
 Experience: set exceeds_experience=true when the posting requires clearly more professional experience
 than the CV shows (e.g. 3+ years asked, about 1.5 on the CV).
 Base the judgement only on the posting text. If the description is missing, judge from the title, keep the
@@ -61,6 +66,10 @@ def apply_caps(res, row, profile):
     verdict = res.get("verdict") if res.get("verdict") in VERDICTS else "maybe"
     notes = []
     breaks = bool(res.get("breaks_setup"))
+    minutes = travel.parse(row.get("Travel"))
+    if (breaks and row.get("Work mode") == "hybrid" and minutes is not None
+            and (profile.max_hybrid_minutes <= 0 or minutes <= profile.max_hybrid_minutes)):
+        breaks = False  # travel is checked here, not by the model (it miscounts limits); office days below
     office = res.get("office_days")
     if (profile.max_office_days > 0 and isinstance(office, int) and office > profile.max_office_days
             and not profile.near_home(str(row.get("Location") or ""))):
@@ -69,6 +78,9 @@ def apply_caps(res, row, profile):
     if breaks:
         fit, verdict = min(fit, SETUP_CAP), "no"
         notes.append("work setup doesn't fit")
+    if res.get("avoided_tech"):
+        fit, verdict = min(fit, SETUP_CAP), "no"
+        notes.append("main technology is on your avoid list")
     if res.get("exceeds_experience"):
         fit = min(fit, EXPERIENCE_CAP)
         verdict = "maybe" if verdict == "match" else verdict

@@ -22,6 +22,20 @@ def place_key(location):
     return " ".join(first.split()).lower()
 
 
+def parse(value):
+    """'3h', '3', '2h30', '2:30', '~2 h 30', '150 min' → minutes; None if unreadable.
+    A bare number up to 12 means hours, above that minutes."""
+    t = str(value or "").strip().lower().replace(" ", "").lstrip("~")
+    m = re.fullmatch(r"(\d+)(?:h|u|uur|hours?|:)(\d{1,2})?(?:m|min)?", t)
+    if m:
+        return int(m.group(1)) * 60 + int(m.group(2) or 0)
+    m = re.fullmatch(r"(\d+)(m|min|mins|minutes?)?", t)
+    if m:
+        n = int(m.group(1))
+        return n if m.group(2) or n > 12 else n * 60
+    return None
+
+
 def text(minutes):
     if minutes is None:
         return ""

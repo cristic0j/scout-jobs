@@ -7,7 +7,23 @@ COLUMNS = ["Found", "Fit (1-10)", "Job title", "Company", "Location", "Work mode
            "Why it fits", "Caveats", "CV", "Profile", "Link"]
 
 
+def collapse(rows):
+    """One row per job: later duplicates (same link, or same title at a similarly spelled company) only
+    fill in what the first row is missing, so your own columns survive."""
+    out, by_link, by_key = [], {}, {}
+    for r in rows:
+        key = output.fuzzy_key(r.get("Company"), r.get("Job title"))
+        first = by_link.get(r.get("Link")) or by_key.get(key)
+        if first is None:
+            out.append(r)
+            by_link[r.get("Link")], by_key[key] = r, r
+        else:
+            first.update({k: v for k, v in r.items() if v not in ("", None) and first.get(k) in ("", None)})
+    return out
+
+
 def _write(path, headers, rows):
+    rows[:] = collapse(rows)
     rows.sort(key=lambda r: int(r.get("Fit (1-10)") or 0), reverse=True)
     rows.sort(key=lambda r: str(r.get("Found") or ""), reverse=True)  # stable: newest day first, best fit first
     output.write(path, headers, rows, SHEET)
