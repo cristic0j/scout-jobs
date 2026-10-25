@@ -6,3 +6,4 @@ cv/
 results/
 profiles/preferences.json
 .pytest_cache/
+searches/

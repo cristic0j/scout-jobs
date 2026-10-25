@@ -23,15 +23,51 @@ def test_software_preset():
     assert sum(dropped.values()) == 4
 
 
-def test_work_mode_unknown():
+def at(title, place, mode="", travel=None):
+    j = make(title, mode=mode)
+    j.location, j.travel = place, travel
+    return j
+
+
+def kept(p, jobs):
+    return [j.title for j in filters.apply(jobs, filters.build(p, TODAY))[0]]
+
+
+def test_work_setup_by_place_and_travel():
     p = Profile.from_preset("software")
-    p.work_modes = ["hybrid"]
-    jobs = [make("Web Developer", mode="hybrid"), make("Android Developer", mode="on-site"),
-            make("Java Developer")]
-    p.keep_unknown_work_mode = True
-    assert len(filters.apply(jobs, filters.build(p, TODAY))[0]) == 2
-    p.keep_unknown_work_mode = False
-    assert [j.title for j in filters.apply(jobs, filters.build(p, TODAY))[0]] == ["Web Developer"]
+    p.onsite_places, p.max_hybrid_minutes = ["Maastricht", "Heerlen"], 90
+    jobs = [at("Web Developer", "Maastricht, Limburg", "on-site"),        # on-site near home
+            at("Java Developer", "Amsterdam", "on-site"),                 # on-site far away
+            at("Android Developer", "Eindhoven", "hybrid", 60),           # hybrid within the limit
+            at("Kotlin Developer", "Delft", "hybrid", 150),               # hybrid too far
+            at("Backend Developer", "Amsterdam", "remote"),               # remote anywhere
+            at("Frontend Developer", "Heerlen", "hybrid"),                # hybrid near home
+            at("Mobile Developer", "Rotterdam", "hybrid", None),          # travel unknown → matcher judges
+            at("Software Engineer", "Groningen", "", 200)]                # unknown mode, could be remote
+    assert kept(p, jobs) == ["Web Developer", "Android Developer", "Backend Developer", "Frontend Developer",
+                             "Mobile Developer", "Software Engineer"]
+    assert kept(p, [at("Web Developer", "Brabantine City Row", "on-site")]) == []
+    assert kept(p, [at("Web Developer", "South Limburg", "on-site")]) == ["Web Developer"]  # region of home
+
+    p.setups = ["on-site", "hybrid"]  # no remote: unknown mode far away must be within the travel limit
+    assert kept(p, jobs) == ["Web Developer", "Android Developer", "Frontend Developer", "Mobile Developer"]
+
+
+def test_work_setup_defaults_allow_everything():
+    p = Profile.from_preset("software")
+    assert p.any_setup_anywhere()
+    assert len(kept(p, [at("Java Developer", "Amsterdam", "on-site"), at("Web Developer", "Utrecht")])) == 2
+
+
+def test_linkedin_plan():
+    from jobsearch.sources import linkedin
+    p = Profile.from_preset("software")
+    assert linkedin.plan(p) == [("Netherlands", "", "")]
+    p.onsite_places, p.home, p.max_hybrid_minutes = ["Maastricht", "Heerlen"], "Maastricht", 90
+    assert linkedin.plan(p) == [("Maastricht, Netherlands", 25, ""), ("Netherlands", "", "hybrid"),
+                                ("Netherlands", "", "remote")]
+    p.setups = ["remote"]
+    assert linkedin.plan(p) == [("Netherlands", "", "remote")]
 
 
 def test_other_category_and_no_include():

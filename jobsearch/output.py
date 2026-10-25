@@ -11,12 +11,14 @@ import openpyxl
 from openpyxl.styles import Font
 from openpyxl.utils import get_column_letter
 
+from . import travel
+
 TRACKER = Path.home() / "Desktop/Jobs/jobs.xlsx"
 SHEET = "Jobs"
 COLUMNS = ["Processed", "First seen", "Last seen", "Already in tracker", "Posted", "Job title", "Company",
-           "Location", "Work mode", "Level", "Language", "Source", "Link"]
+           "Location", "Work mode", "Travel", "Level", "Language", "Source", "Link"]
 WIDTHS = {"Processed": 11, "First seen": 11, "Last seen": 11, "Already in tracker": 10, "Posted": 11,
-          "Job title": 50, "Company": 24, "Location": 30, "Work mode": 10, "Level": 11, "Language": 14,
+          "Job title": 50, "Company": 24, "Location": 30, "Work mode": 10, "Travel": 9, "Level": 11, "Language": 14,
           "Source": 11, "Link": 60, "AI fit": 7, "AI verdict": 10, "AI reason": 60,
           "Found": 11, "Fit (1-10)": 9, "Why it fits": 60, "Caveats": 40, "CV": 24, "Profile": 18}
 
@@ -27,6 +29,11 @@ def norm(s):
 
 def job_key(company, title):
     return norm(company) + "|" + norm(title)
+
+
+def fuzzy_key(company, title):
+    """Same posting from two sources often spells the company differently (Vinted / Vinteden)."""
+    return norm(title) + "|" + norm(company)[:5]
 
 
 def tracked_keys():
@@ -53,8 +60,8 @@ def tracked_keys():
 def job_fields(j):
     """Columns refreshed from the latest fetch. Language only when it was checked this run."""
     out = {"Already in tracker": "yes" if j.tracked else "", "Posted": j.posted, "Job title": j.title,
-           "Company": j.company, "Location": j.location, "Work mode": j.work_mode, "Level": j.level,
-           "Source": j.source, "Link": j.link}
+           "Company": j.company, "Location": j.location, "Work mode": j.work_mode, "Travel": travel.text(j.travel),
+           "Level": j.level, "Source": j.source, "Link": j.link}
     if j.lang:
         out["Language"] = j.lang
     return out

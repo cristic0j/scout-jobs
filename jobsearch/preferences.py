@@ -1,15 +1,14 @@
-"""What the user wants from any job, shared by all profiles. Asked once during setup, then reused."""
+"""What the user wants from any job, shared by all profiles of a search. Asked during setup, then reused."""
 import json
 from dataclasses import asdict, dataclass, field, fields
 from pathlib import Path
 
-from .profile import PROFILES, ROOT
+from .detect import WORK_MODES
+from .profile import Profile
 
-PATH = PROFILES / "preferences.json"
-CV_DIR = ROOT / "cv"
-CV_TYPES = {".pdf", ".txt", ".md"}
 # Optional notes the planner may use to suggest answers (Cristian's playbook).
 NOTES_FILE = Path.home() / "Desktop/Jobs/JOB_SEARCH.md"
+NOT_ASKED = -1
 
 
 @dataclass
@@ -18,7 +17,10 @@ class Preferences:
     location: str = "Netherlands"                   # country / region to search
     languages: list = field(default_factory=list)   # languages the user can work in
     levels: list = field(default_factory=lambda: ["internship", "junior", "medior"])
-    work_modes: list = field(default_factory=list)  # empty = any
+    setups: list = field(default_factory=lambda: list(WORK_MODES))  # on-site / hybrid / remote
+    onsite_places: list = field(default_factory=list)  # home + neighbouring towns
+    max_hybrid_minutes: int = NOT_ASKED             # one-way travel limit for hybrid; 0 = any
+    max_office_days: int = 0                        # hybrid outside the on-site towns; 0 = any
     max_days: int = 30
     dutch: str = "off"                              # key of profile.DUTCH_FILTERS
     avoid: list = field(default_factory=list)       # title words to drop in every profile
@@ -26,30 +28,20 @@ class Preferences:
     notes: list = field(default_factory=list)       # answers to the planner's free-form questions
 
     @classmethod
-    def load(cls):
-        if not PATH.exists():
+    def load(cls, search):
+        if not search.prefs_path.exists():
             return None
         known = {f.name for f in fields(cls)}
-        return cls(**{k: v for k, v in json.loads(PATH.read_text()).items() if k in known})
+        return cls(**{k: v for k, v in json.loads(search.prefs_path.read_text()).items() if k in known})
 
-    def save(self):
-        PROFILES.mkdir(exist_ok=True)
-        PATH.write_text(json.dumps(asdict(self), indent=2, ensure_ascii=False) + "\n")
-        return PATH
+    def save(self, search):
+        search.root.mkdir(parents=True, exist_ok=True)
+        search.prefs_path.write_text(json.dumps(asdict(self), indent=2, ensure_ascii=False) + "\n")
+        return search.prefs_path
 
-    def describe(self):
-        return "\n".join([
-            f"  Lives in:         {self.home or '—'}",
-            f"  Search in:        {self.location}",
-            f"  Languages:        {', '.join(self.languages) or '—'}",
-            f"  Seniority:        {', '.join(self.levels)}",
-            f"  Work mode:        {', '.join(self.work_modes) or 'any'}",
-            f"  Max age:          {self.max_days} days",
-            f"  Dutch filter:     {self.dutch}",
-            f"  Always drop:      {', '.join(self.avoid) or '—'}",
-            f"  Extra roles:      {', '.join(self.extra_roles) or '—'}",
-        ])
+    def setups_text(self):
+        return Profile(setups=self.setups, onsite_places=self.onsite_places,
+                       max_hybrid_minutes=self.max_hybrid_minutes, max_office_days=self.max_office_days).setups_text()
 
-
-def cv_files():
-    return sorted(p for p in CV_DIR.glob("*") if p.suffix.lower() in CV_TYPES)
+    def setups_complete(self):
+        return "hybrid" not in self.setups or self.max_hybrid_minutes != NOT_ASKED

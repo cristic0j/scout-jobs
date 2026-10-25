@@ -5,11 +5,10 @@ from datetime import date, timedelta
 from .matching import keyword_pattern
 
 
-def build(profile, today=None):
+def build(profile, today=None, with_setup=True):
     cutoff = ((today or date.today()) - timedelta(days=profile.max_days)).isoformat()
     include, exclude = keyword_pattern(profile.title_include), keyword_pattern(profile.title_exclude)
-    levels, modes = set(profile.levels), set(profile.work_modes)
-    keep_unknown = profile.keep_unknown_work_mode
+    levels = set(profile.levels)
     out = []
     if include:
         out.append(("title has none of the role keywords", lambda j: bool(include.search(j.title))))
@@ -17,10 +16,17 @@ def build(profile, today=None):
         out.append(("title has an excluded keyword", lambda j: not exclude.search(j.title)))
     out.append(("seniority not selected", lambda j: j.level in levels))
     out.append((f"older than {profile.max_days} days", lambda j: not j.posted or j.posted >= cutoff))
-    if modes:
-        out.append(("work mode not selected",
-                    lambda j: j.work_mode in modes or (not j.work_mode and keep_unknown)))
+    if with_setup and setup(profile):
+        out.append(setup(profile))
     return out
+
+
+def setup(profile):
+    """Work setup by place and travel time; run after job.travel is filled in. None when anything goes."""
+    if profile.any_setup_anywhere():
+        return None
+    allowed = profile.setup_allowed()
+    return "work setup not allowed at that location", lambda j: allowed(j.work_mode, j.location, j.travel)
 
 
 def dutch(profile):

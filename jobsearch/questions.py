@@ -2,10 +2,10 @@
 import os
 import re
 
-from .detect import LEVELS
+from .detect import LEVELS, WORK_MODES
 from .matching import keyword_pattern
 from .presets import PRESETS
-from .profile import DUTCH_FILTERS, WORK_MODES, Profile, load, save, saved_names, slug
+from .profile import DUTCH_FILTERS, Profile, slug
 from .sources import SOURCES
 
 COUNTRY_CODES = {"netherlands": "nl", "germany": "de", "belgium": "be", "united kingdom": "gb", "uk": "gb",
@@ -29,10 +29,10 @@ def ask_yes(prompt, default=True):
             return False
 
 
-def ask_int(prompt, default):
+def ask_int(prompt, default, allow_zero=False):
     while True:
         a = ask(prompt, default)
-        if a.isdigit() and int(a) > 0:
+        if a.isdigit() and (int(a) > 0 or allow_zero):
             return int(a)
         print("  Please type a whole number.")
 
@@ -124,11 +124,18 @@ def edit(p):
     p.levels = choose_many("Seniority levels to keep:", [(l, l) for l in LEVELS], p.levels)
     p.max_days = ask_int("\nMax posting age in days", p.max_days)
 
-    p.work_modes = choose_many("Work mode (none = any; LinkedIn then runs one search per mode):",
-                               [(m, m) for m in WORK_MODES], p.work_modes, allow_empty=True)
-    if p.work_modes:
-        p.keep_unknown_work_mode = ask_yes("Keep jobs whose work mode can't be determined?",
-                                           p.keep_unknown_work_mode)
+    p.setups = choose_many("Work setups you're open to:", [(m, m) for m in WORK_MODES], p.setups)
+    if "on-site" in p.setups:
+        p.onsite_places = edit_list("On-site only in these towns, e.g. your home town and its neighbours "
+                                    "(none = anywhere)", p.onsite_places)
+    if "hybrid" in p.setups:
+        if p.onsite_places and not p.home:
+            p.home = ask("\nHome town (travel times for hybrid jobs are measured from here)", p.onsite_places[0])
+        p.max_hybrid_minutes = ask_int("\nMax travel time for hybrid jobs in minutes, one way (0 = any)",
+                                       p.max_hybrid_minutes, allow_zero=True)
+        p.max_office_days = ask_int("Max office days per week for hybrid jobs away from home (0 = any)",
+                                    p.max_office_days, allow_zero=True)
+    print(f"  → {p.setups_text()}")
 
     p.dutch = choose_one("Dutch filter (opens each LinkedIn posting: slow on the first run, cached after):",
                          list(DUTCH_FILTERS.items()), p.dutch)
@@ -150,17 +157,17 @@ def edit(p):
     return p
 
 
-def run():
-    """Ask everything; returns the Profile to run, or None if the user doesn't want to start."""
-    print("Job search — Enter keeps the value in [brackets].")
+def run(search):
+    """Build or edit a profile by hand inside a search folder; returns it, or None to not start."""
+    print("Manual search — Enter keeps the value in [brackets].")
     p = None
-    saved = saved_names()
+    saved = search.profile_names()
     if saved:
-        pick = choose_one("Start from:", [(n, f"Saved profile: {n}") for n in saved] + [("", "New search")],
+        pick = choose_one("Start from:", [(n, f"Saved profile: {n}") for n in saved] + [("", "New profile")],
                           saved[0])
         if pick:
-            p = load(pick)
-            print(f"\n{p.describe()}")
+            p = search.load_profile(pick)
+            print(f"\n{p.describe(search.result_path(p))}")
             if ask_yes("\nRun with these settings?"):
                 return p
     if p is None:
@@ -168,8 +175,7 @@ def run():
         p = Profile.from_preset(category)
     edit(p)
 
-    if ask_yes("\nSave these settings as a profile (lets you rerun without questions)?"):
-        p.name = slug(ask("Profile name", p.name))
-        print(f"  Saved to {save(p)}")
-    print(f"\n{p.describe()}")
+    p.name = slug(ask("\nProfile name", p.name))
+    print(f"  Saved to {search.save_profile(p)}")
+    print(f"\n{p.describe(search.result_path(p))}")
     return p if ask_yes("\nStart the search now?") else None

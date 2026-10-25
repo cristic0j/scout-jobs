@@ -23,16 +23,34 @@ def _field(card, cls):
     return html.unescape(re.sub(r"<[^>]+>", "", m.group(1))).strip() if m else ""
 
 
+NEAR_HOME_MILES = 25  # LinkedIn's distance filter is in miles (~40 km)
+
+
+def plan(profile):
+    """[(location, distance, work_mode)] queries per search term.
+    Near home: any work mode. Elsewhere in the country: LinkedIn's hybrid / remote filters."""
+    setups = set(profile.setups)
+    if profile.any_setup_anywhere() or ("on-site" in setups and not profile.onsite_places):
+        return [(profile.location, "", "")]
+    queries = []
+    home = profile.home or (profile.onsite_places or [""])[0]
+    if "on-site" in setups and home:
+        queries.append((f"{home}, {profile.location}", NEAR_HOME_MILES, ""))
+    queries += [(profile.location, "", m) for m in ("hybrid", "remote") if m in setups]
+    return queries
+
+
 def search(profile):
-    """One query per search term (and per selected work mode), sleeping between pages to avoid HTTP 429."""
+    """Each search term × each query from plan(), sleeping between pages to avoid HTTP 429."""
     levels = ",".join(LEVEL_CODES[l] for l in LEVELS if l in profile.levels)
     out = []
-    for mode in profile.work_modes or [""]:
+    for location, distance, mode in plan(profile):
         for term in profile.search_terms:
             for start in range(0, 100, 25):
                 url = ("https://www.linkedin.com/jobs-guest/jobs/api/seeMoreJobPostings/search"
-                       f"?keywords={requests.utils.quote(term)}&location={requests.utils.quote(profile.location)}"
+                       f"?keywords={requests.utils.quote(term)}&location={requests.utils.quote(location)}"
                        f"&f_TPR=r{profile.max_days * 86400}&f_E={levels}&start={start}"
+                       + (f"&distance={distance}" if distance else "")
                        + (f"&f_WT={MODE_CODES[mode]}" if mode else ""))
                 for attempt in range(3):
                     r = get(url)

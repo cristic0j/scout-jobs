@@ -7,23 +7,24 @@ Related: the manual playbook and tracker live in `~/Desktop/Jobs` (`JOB_SEARCH.m
 The code only **reads** `jobs.xlsx` (to skip jobs already tracked); it never writes it.
 
 ## How it works
+Every search has its own folder, `searches/<name>/` (gitignored): `cv/`, `preferences.json`,
+`profiles/<role>.json`, `results/<role>.xlsx`, `matches.xlsx`, `state.json`, `travel.json`.
 ```
-python3 -m jobsearch setup        cv/*.pdf → planner agent (Gemini) → roles + preferences
-                                  → asks only what the CV/notes don't answer, + "any other roles?"
-                                  → profiles/<role>.json, profiles/preferences.json
-python3 -m jobsearch run          every profile: fetch → filter → merge into results/<role>.xlsx
-                                  → if there are unprocessed rows: matcher agent (Gemini) judges them
-                                    against the CV → Processed + AI fit/verdict/reason columns
-                                  → fit ≥ 7 → results/matches.xlsx
-python3 -m jobsearch review       matcher only, no fetch
-python3 -m jobsearch manual       build a search by hand with the question menus (no AI)
-python3 -m jobsearch list         saved profiles
-python3 -m jobsearch              setup on first use, otherwise a menu
+python3 -m jobsearch              menu: pick a search or "New search" (asks a name, makes the folder,
+                                  waits for the CV, warns if that CV is already used in another search)
+  new / CV changed → planner agent (Gemini): roles + preferences, asks only what's missing
+                     (work setup always: on-site towns, hybrid max travel time, max office days)
+  existing        → Run now · Change preferences · Re-plan roles · Review · Re-score · Manual profile
+python3 -m jobsearch run          every search (or --search NAME): fetch → filter (incl. travel time for
+                                  hybrid) → merge → matcher on unprocessed rows only → matches.xlsx
+python3 -m jobsearch review [--rescore]   matcher only; --rescore re-filters + re-judges all rows
+python3 -m jobsearch list         searches and their roles
 ```
-`fetch_nl_jobs.py` still works and is the same as `python3 -m jobsearch`.
+Matcher limits are enforced in code: a job that breaks the work setup, or needs more office days than
+allowed away from home → fit ≤ 4, "no". Asking clearly more experience than the CV shows → fit ≤ 6.
 
-Needs `GEMINI_API_KEY` in `~/.zshrc` (model `gemini-3.8-flash`, override with `GEMINI_MODEL`).
-Put CV versions (PDF, one file per version) in `cv/`. `cv/`, `results/` and `profiles/preferences.json` are gitignored.
+Needs `GEMINI_API_KEY` in `~/.zshrc` (`gemini-3.8-flash`, falling back to 3.6-flash / 3.5-flash-lite when busy;
+override with `GEMINI_MODEL`). `fetch_nl_jobs.py` still works and is the same as `python3 -m jobsearch`.
 
 ## Done
 **2026-10-24**: single-script NL fetcher (LinkedIn guest search, Arbeitnow, Greenhouse/Lever/Ashby/Recruitee

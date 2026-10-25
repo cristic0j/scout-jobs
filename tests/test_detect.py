@@ -35,7 +35,9 @@ def test_level(title, expected):
 
 
 def test_work_mode():
-    assert work_mode(make(mode="on-site", desc="hybrid")) == "on-site"  # structured field wins
+    assert work_mode(make(mode="on-site", desc="hybrid work")) == "on-site"  # source field beats description
+    assert work_mode(make(title="Android Engineer – Amsterdam (Hybrid)", mode="remote")) == "hybrid"  # title wins
+    assert work_mode(make(mode="unspecified")) == ""
     assert work_mode(make(desc="We work hybrid from Utrecht.")) == "hybrid"
     assert work_mode(make(desc="You work 3 days in the office.")) == "hybrid"
     assert work_mode(make(desc="Wij werken 2 dagen op kantoor.")) == "hybrid"

@@ -1,15 +1,13 @@
 """A saved search: what to look for, which filters apply, and which sources to ask."""
-import json
 import re
-from dataclasses import asdict, dataclass, field, fields
+from dataclasses import dataclass, field, fields
 from pathlib import Path
 
+from .detect import WORK_MODES
 from .matching import keyword_pattern
 from .presets import PRESETS
 
 ROOT = Path(__file__).resolve().parent.parent
-PROFILES = ROOT / "profiles"
-RESULTS = ROOT / "results"
 
 # Company boards known (2026-10-24) to post Netherlands roles. Add slugs freely.
 DEFAULT_BOARDS = {
@@ -28,8 +26,20 @@ NL_PLACES = ["netherlands", "nederland", "holland", "amsterdam", "rotterdam", "u
              "weert", "helmond", "apeldoorn", "schiphol", "hoofddorp", "amstelveen", "zaandam", "deventer",
              "veenendaal", r"re:\bbest\b", "veldhoven"]
 
+# LinkedIn sometimes gives a region instead of a city. Choosing a city also accepts its region.
+REGIONS = {
+    "Brabantine City Row": ["eindhoven", "tilburg", "den bosch", "'s-hertogenbosch", "breda", "helmond"],
+    "Randstad": ["amsterdam", "rotterdam", "den haag", "the hague", "utrecht", "leiden", "haarlem", "delft"],
+    "South Limburg": ["maastricht", "heerlen", "sittard", "geleen", "kerkrade", "valkenburg", "meerssen"],
+}
+
+
+def with_regions(places):
+    chosen = {p.lower() for p in places}
+    return list(places) + [r for r, cities in REGIONS.items() if chosen & set(cities)]
+
+
 SOURCES = ["linkedin", "boards", "arbeitnow", "jooble", "adzuna"]
-WORK_MODES = ["hybrid", "remote", "on-site"]
 DUTCH_FILTERS = {"off": "Off",
                  "written": "Drop jobs written in Dutch",
                  "required": "Drop jobs written in Dutch or requiring Dutch"}
@@ -44,8 +54,13 @@ class Profile:
     title_exclude: list = field(default_factory=list)
     levels: list = field(default_factory=lambda: ["internship", "junior", "medior"])
     max_days: int = 30
-    work_modes: list = field(default_factory=list)  # empty = any
-    keep_unknown_work_mode: bool = True
+    # Work setup: on-site only in onsite_places (empty = anywhere), hybrid near home or within
+    # max_hybrid_minutes of travel (0 = any), remote anywhere.
+    setups: list = field(default_factory=lambda: list(WORK_MODES))
+    onsite_places: list = field(default_factory=list)
+    max_hybrid_minutes: int = 0
+    max_office_days: int = 0  # for hybrid outside the on-site towns; 0 = any (judged by the matcher)
+    home: str = ""  # centre of the near-home LinkedIn search; defaults to the first on-site place
     dutch: str = "off"  # key of DUTCH_FILTERS
     location: str = "Netherlands"
     location_match: list = field(default_factory=lambda: list(NL_PLACES))
@@ -78,16 +93,53 @@ class Profile:
     def location_re(self):
         return keyword_pattern(self.location_match or [self.location])
 
-    @property
-    def output(self):
-        return RESULTS / f"{self.name}.xlsx"
+    def near_home(self, place):
+        onsite = keyword_pattern(with_regions(self.onsite_places))
+        return onsite is None or bool(onsite.search(place or ""))
 
-    def describe(self):
+    def needs_travel(self):
+        return "hybrid" in self.setups and self.max_hybrid_minutes > 0
+
+    def setup_allowed(self):
+        """fn(work_mode, job_location, travel_minutes) → bool.
+        Unknown travel (None) passes, so the matcher can judge from the description.
+        Unknown mode ("") passes if any chosen setup could apply there."""
+        setups = set(self.setups) or set(WORK_MODES)
+        onsite = keyword_pattern(with_regions(self.onsite_places))
+        limit = self.max_hybrid_minutes
+
+        def allowed(mode, place, travel=None):
+            near = onsite is None or bool(onsite.search(place or ""))
+            if mode == "on-site":
+                return "on-site" in setups and near
+            if mode == "hybrid":
+                return "hybrid" in setups and (near or limit <= 0 or travel is None or travel <= limit)
+            if mode == "remote":
+                return "remote" in setups
+            return any(allowed(m, place, travel) for m in WORK_MODES)
+        return allowed
+
+    def any_setup_anywhere(self):
+        return set(self.setups) >= set(WORK_MODES) and not self.onsite_places and self.max_hybrid_minutes <= 0
+
+    def setups_text(self):
+        from .travel import text
+        parts = []
+        if "on-site" in self.setups:
+            parts.append(f"on-site in {', '.join(self.onsite_places)}" if self.onsite_places else "on-site anywhere")
+        if "hybrid" in self.setups:
+            hybrid = f"hybrid within {text(self.max_hybrid_minutes)[1:]}" if self.max_hybrid_minutes > 0 else \
+                "hybrid anywhere" if self.max_hybrid_minutes == 0 else "hybrid (travel limit not set yet)"
+            if self.max_office_days > 0:
+                hybrid += f" (max {self.max_office_days} office day{'s' if self.max_office_days > 1 else ''}/week)"
+            parts.append(hybrid)
+        if "remote" in self.setups:
+            parts.append("remote anywhere")
+        return "; ".join(parts) or "—"
+
+    def describe(self, output=None):
         def lst(xs, n=8):
             return ", ".join(xs[:n]) + (f" … (+{len(xs) - n})" if len(xs) > n else "") if xs else "—"
-        modes = ", ".join(self.work_modes) if self.work_modes else "any"
-        if self.work_modes:
-            modes += " (unknown kept)" if self.keep_unknown_work_mode else " (unknown dropped)"
         return "\n".join([
             f"  Profile:          {self.name} ({PRESETS.get(self.category, {}).get('label', self.category)})",
             f"  Search terms:     {lst(self.search_terms)}",
@@ -95,32 +147,13 @@ class Profile:
             f"  Title must not:   {lst(self.title_exclude)}",
             f"  Seniority:        {', '.join(self.levels)}",
             f"  Max age:          {self.max_days} days",
-            f"  Work mode:        {modes}",
+            f"  Work setup:       {self.setups_text()}",
             f"  Dutch filter:     {DUTCH_FILTERS[self.dutch]}",
             f"  Location:         {self.location}",
             f"  Sources:          {', '.join(self.sources)}",
             f"  Judged against:   {', '.join(self.cv) or 'no CV (matcher skipped)'}",
-            f"  Results file:     {self.output}",
-        ])
+        ] + ([f"  Results file:     {output}"] if output else []))
 
 
 def slug(name):
     return re.sub(r"[^a-z0-9_-]+", "-", name.lower()).strip("-") or "search"
-
-
-def saved_names():
-    return sorted(p.stem for p in PROFILES.glob("*.json") if p.stem != "preferences")
-
-
-def load(name):
-    path = PROFILES / f"{slug(name)}.json"
-    if not path.exists():
-        raise SystemExit(f"No saved profile '{name}'. Saved: {', '.join(saved_names()) or 'none'}")
-    return Profile.from_dict(json.loads(path.read_text()))
-
-
-def save(profile):
-    PROFILES.mkdir(exist_ok=True)
-    path = PROFILES / f"{profile.name}.json"
-    path.write_text(json.dumps(asdict(profile), indent=2, ensure_ascii=False) + "\n")
-    return path

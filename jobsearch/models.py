@@ -15,6 +15,7 @@ class Job:
     # Filled in by the pipeline:
     level: str = ""      # "internship" | "junior" | "medior" | "senior"
     lang: str = ""       # "Dutch" | "Dutch required" | "English" | "?" | "" (not checked)
+    travel: object = None  # minutes from home (int), None = not needed or unknown
     tracked: bool = False
     new: bool = False
 

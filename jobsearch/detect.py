@@ -5,6 +5,7 @@ from .http import strip_html
 from .matching import keyword_pattern
 
 LEVELS = ["internship", "junior", "medior", "senior"]
+WORK_MODES = ["on-site", "hybrid", "remote"]
 
 # Checked in this order; anything unmatched is "medior".
 LEVEL_WORDS = [
@@ -35,13 +36,19 @@ REMOTE_TEXT = re.compile(r"fully remote|100% remote|remote[- ]first|work from an
 
 
 def work_mode(job):
-    """Source's own field first, then hybrid/remote wording in the posting; "" if unknown."""
-    if job.work_mode:
+    """Title/location wording first (LinkedIn's own work-mode tags are often wrong), then the source's
+    field, then hybrid/remote wording in the description; "" if unknown."""
+    place = f"{job.title} {job.location}"
+    if HYBRID_PLACE.search(place):
+        return "hybrid"
+    if REMOTE_PLACE.search(place):
+        return "remote"
+    if job.work_mode in WORK_MODES:  # sources also send values like "unspecified"
         return job.work_mode
     desc = strip_html(job.desc)
-    if HYBRID_PLACE.search(f"{job.title} {job.location}") or HYBRID_TEXT.search(desc):
+    if HYBRID_TEXT.search(desc):
         return "hybrid"
-    if REMOTE_PLACE.search(f"{job.title} {job.location}") or REMOTE_TEXT.search(desc):
+    if REMOTE_TEXT.search(desc):
         return "remote"
     return ""
 
