@@ -5,6 +5,7 @@ searches/<name>/preferences.json
 searches/<name>/profiles/<role>.json
 searches/<name>/results/<role>.xlsx
 searches/<name>/matches.xlsx
+searches/<name>/cloud.json          the Google Sheet it syncs with (see cloud.py)
 searches/<name>/state.json          CV fingerprint, last setup, last run
 searches/<name>/travel.json         cached travel times from home
 """

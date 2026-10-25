@@ -227,7 +227,7 @@ def run_search(search, settings, now):
     search.save_state(failures=0, retry_after="")
     msgs = _source_alerts(search)
     new = [r for r in output.read(search.matches_path, matches.SHEET, matches.COLUMNS)[1]
-           if r.get("Link") not in before and int(r.get("Fit (1-10)") or 0) >= settings.min_fit] \
+           if r.get("Link") not in before and matches.fit(r) >= settings.min_fit] \
         if search.matches_path.exists() else []
     if new:
         msgs.insert(0, notify.matches_message(search.name, new, search.matches_path))

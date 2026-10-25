@@ -1,9 +1,10 @@
 """<search>/matches.xlsx: the jobs the matcher found to fit. One row per job (by link, or by the same title
-at a similarly spelled company), and any columns you add yourself (e.g. Applied?) are kept."""
-from . import output
+at a similarly spelled company), and any columns you add yourself are kept. Tick Applied when you apply.
+When a Google Sheet is connected (cloud.py), every save syncs with it first."""
+from . import cloud, output
 
 SHEET = "Matches"
-COLUMNS = ["Found", "Fit (1-10)", "Job title", "Company", "Location", "Work mode", "Travel", "Posted",
+COLUMNS = [cloud.APPLIED, "Found", "Fit (1-10)", "Job title", "Company", "Location", "Work mode", "Travel", "Posted",
            "Why it fits", "Caveats", "CV", "Profile", "Link"]
 
 
@@ -22,16 +23,41 @@ def collapse(rows):
     return out
 
 
-def _write(path, headers, rows):
-    rows[:] = collapse(rows)
-    rows.sort(key=lambda r: int(r.get("Fit (1-10)") or 0), reverse=True)
+def fit(row):
+    try:
+        return int(row.get("Fit (1-10)") or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
+def _save(path, headers, rows):
+    rows = collapse(rows)
+    rows.sort(key=fit, reverse=True)
     rows.sort(key=lambda r: str(r.get("Found") or ""), reverse=True)  # stable: newest day first, best fit first
+    headers = COLUMNS + [h for h in headers if h and h not in COLUMNS]
     output.write(path, headers, rows, SHEET)
+    return headers, rows
+
+
+def _write(path, headers, rows):
+    """Save, syncing with the Google Sheet first when one is connected."""
+    status = cloud.sync(path, headers, rows, [c for c in COLUMNS if c != cloud.APPLIED],
+                        lambda h, r: _save(path, h, r))
+    if status:
+        print(f"  {status}")
+
+
+def sync(path):
+    """Sync with the Google Sheet even when nothing changed here (brings your ticks and deletions in)."""
+    if cloud.connected(path):
+        _write(path, *output.read(path, SHEET, COLUMNS))
 
 
 def add(entries, path):
     """Insert or update matches ({column: value}); an update keeps Found and your own columns.
-    Returns how many were new."""
+    Jobs you deleted from the Google Sheet are not added again. Returns how many were new."""
+    deleted = cloud.deleted_keys(path)
+    entries = [e for e in entries if not cloud.is_deleted(e, deleted)]
     if not entries:
         return 0
     headers, rows = output.read(path, SHEET, COLUMNS)

@@ -64,6 +64,14 @@ python3 -m jobsearch notify --test
 python3 -m jobsearch tick [--force --search NAME]         what the agent runs
 ```
 
+## Matches in Google Sheets
+Menu → search → "Google Sheets" connects a sheet (service-account key, any name, in `~/.config/jobsearch/`, sheet shared
+with its email; `pip install gspread`). Only `matches.xlsx` goes online, with an **Applied** checkbox column.
+Every save of matches.xlsx (and every run) pulls the sheet first: Applied ticks, your own columns and rows you
+added come in; rows you delete there stay deleted (the matcher won't re-add them). Then local is saved and the
+sheet rewritten. Offline → local only, the sheet is left alone, the next save catches up. `jobs.xlsx` stays
+local and is never written.
+
 ## Next steps
 1. Optional: Telegram bot with Applied / Not interested buttons that write back into matches.xlsx.
 2. Optional: board slugs per category (current boards are tech companies).

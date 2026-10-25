@@ -20,7 +20,7 @@ COLUMNS = ["Processed", "First seen", "Last seen", "Already in tracker", "Posted
 WIDTHS = {"Processed": 11, "First seen": 11, "Last seen": 11, "Already in tracker": 10, "Posted": 11,
           "Job title": 50, "Company": 24, "Location": 30, "Work mode": 10, "Travel": 9, "Level": 11, "Language": 14,
           "Source": 11, "Link": 60, "AI fit": 7, "AI verdict": 10, "AI reason": 60,
-          "Found": 11, "Fit (1-10)": 9, "Why it fits": 60, "Caveats": 40, "CV": 24, "Profile": 18}
+          "Found": 11, "Applied": 9, "Fit (1-10)": 9, "Why it fits": 60, "Caveats": 40, "CV": 24, "Profile": 18}
 
 
 def norm(s):

@@ -140,7 +140,8 @@ def send(settings, msg):
 # --- messages ---
 
 def matches_message(search, rows, matches_path):
-    rows = sorted(rows, key=lambda r: -int(r.get("Fit (1-10)") or 0))
+    from .matches import fit
+    rows = sorted(rows, key=lambda r: -fit(r))
     lines = [f"{r.get('Fit (1-10)')} · {r.get('Company')} — {r.get('Job title')}"
              + (f" · {r.get('Travel')}" if r.get("Travel") else "") for r in rows[:6]]
     if len(rows) > 6:

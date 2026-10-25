@@ -15,7 +15,7 @@ import subprocess
 import sys
 from datetime import date, datetime
 
-from . import llm, notify, pipeline, questions, scheduler, setup, workspace
+from . import cloud, llm, matches, notify, pipeline, questions, scheduler, setup, workspace
 from .agents import matcher
 from .preferences import Preferences
 from .profile import slug
@@ -47,6 +47,7 @@ def run(search, profiles=None, do_review=True, max_review=60):
             # Unprocessed rows are new jobs (this run's, or ones left over by --max-review last time).
             if do_review and not review(search, [p], max_review) and not added:
                 print("  No new jobs, review skipped.")
+        matches.sync(search.matches_path)
         search.save_state(last_run=date.today().isoformat(),
                           last_run_at=datetime.now().isoformat(timespec="minutes"))
 
@@ -121,6 +122,8 @@ def open_search(search):
             ("bg", "Run now in the background (you can close the terminal)"),
             ("schedule", f"Automatic runs ({scheduler.every_text(every)})"),
             ("log", "Show the last background run"),
+            ("cloud", "Google Sheets: " + ("sync now / change" if cloud.connected(search.matches_path)
+                                           else "put the matches online")),
             ("prefs", "Change preferences"),
             ("plan", "Re-plan roles from the CV"),
             ("review", "Review unprocessed jobs"),
@@ -138,6 +141,8 @@ def open_search(search):
             ask_schedule(search)
         elif action == "log":
             print(f"\n{scheduler.last_log()}")
+        elif action == "cloud":
+            ask_cloud(search)
         elif action == "prefs":
             setup.change_preferences(search)
         elif action == "plan":
@@ -173,6 +178,63 @@ def ask_schedule(search):
             print("  Set up notifications from the main menu → Notifications.")
     else:
         print(f"  Automatic runs for '{search.name}' are off.")
+
+
+def ask_cloud(search):
+    path = search.matches_path
+    if cloud.connected(path):
+        action = questions.choose_one(f"Matches are online: {cloud.sheet_url(path)}", [
+            ("sync", "Sync now"), ("change", "Use another Google Sheet"), ("off", "Stop syncing"),
+            ("done", "Back")], "sync")
+        if action == "sync":
+            with scheduler.lock() as got:
+                if not got:
+                    print("  A background run is busy right now; it syncs when it saves. Try again in a few minutes.")
+                    return
+                matches.sync(path)
+            return
+        if action == "off":
+            cloud.save_config(path, sheet="", synced=[])
+            print("  Not syncing any more; the Google Sheet and matches.xlsx are left as they are.")
+            return
+        if action == "done":
+            return
+    if not cloud.key():
+        cloud.KEY_DIR.mkdir(mode=0o700, parents=True, exist_ok=True)
+        print(f"""
+  One-time setup (about 5 minutes):
+  1. Go to https://console.cloud.google.com → create a project (any name, e.g. "jobsearch").
+  2. APIs & Services → Library → enable "Google Sheets API".
+  3. APIs & Services → Credentials → Create credentials → Service account (any name) → Done.
+     Open it → Keys → Add key → Create new key → JSON. A .json file downloads.
+  4. Move that file (any name) into:
+       {cloud.KEY_DIR}
+     (outside the project, so it never ends up in git; keep it private, it is the password to the sheet)""")
+        questions.ask("Press Enter when the key file is there")
+        if not cloud.key():
+            print(f"  No key file in {cloud.KEY_DIR} yet. Come back to this menu when it's there.")
+            return
+    email = cloud.account_email()
+    print(f"""
+  5. Create a new, empty Google Sheet (sheets.new) and share it (Share button) with
+       {email or "the client_email in the key file"}
+     as Editor. Untick "Notify people".""")
+    sid = cloud.sheet_id(questions.ask("Paste the sheet's link"))
+    if not sid:
+        print("  That doesn't look like a Google Sheets link.")
+        return
+    try:
+        cloud.open_tab(sid)
+    except cloud.Unavailable as e:
+        print(f"  Couldn't open the sheet ({e}). Is it shared with {email or 'the service account'} as Editor?")
+        return
+    cloud.save_config(path, sheet=sid, synced=[], deleted=cloud.config(path).get("deleted", []))
+    with scheduler.lock() as got:
+        if got:
+            matches.sync(path)
+        else:
+            print("  Connected; a background run is busy and will fill the sheet when it saves.")
+    print(f"  {cloud.sheet_url(path)}\n  Tick Applied there; delete a row to drop a job for good.")
 
 
 def ask_notifications():
